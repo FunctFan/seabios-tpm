@@ -27,6 +27,10 @@
 #include "malloc.h" // malloc_high
 
 
+typedef u8 tpm_ppi_code;
+
+static int tpm_process_cfg(tpm_ppi_code msgCode, int verbose);
+
 /****************************************************************
  * ACPI TCPA table interface
  ****************************************************************/
@@ -76,6 +80,124 @@ tpm_tcpa_probe(void)
 
     return tpm_set_log_area((u8*)(long)tcpa->log_area_start_address,
                             tcpa->log_area_minimum_length);
+}
+
+/*
+ * TPM Physical Presence interface
+ */
+
+/* the following structure is shared between firmware and ACPI */
+struct tpm_ppi {
+    u8 func[256];       /* 0x000 : per function implementation flags; set by BIOS */
+/* whether function is blocked by BIOS settings; bits 2, 3, 4 */
+#define TPM_PPI_FUNC_NOT_IMPLEMENTED     (0 << 0)
+#define TPM_PPI_FUNC_BIOS_ONLY           (1 << 0)
+#define TPM_PPI_FUNC_BLOCKED             (2 << 0)
+#define TPM_PPI_FUNC_ALLOWED_USR_REQ     (3 << 0)
+#define TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ (4 << 0)
+#define TPM_PPI_FUNC_MASK                (7 << 0)
+    u8 ppin;            /* 0x100 : 1 = initialized */
+    u32 ppip;           /* 0x101 : not used */
+    u32 pprp;           /* 0x105 : response from TPM; set by BIOS */
+    u32 pprq;           /* 0x109 : opcode; set by ACPI */
+    u32 pprm;           /* 0x10d : parameter for opcode; set by ACPI */
+    u32 lppr;           /* 0x111 : last opcode; set by BIOS */
+    u32 fret;           /* 0x115 : not used */
+    u32 res1[0x40];     /* 0x119 : reserved for future use */
+    u8 nextStep;        /* 0x159 : next step after reboot */
+} PACKED;
+
+/* the following structure is for the fw_cfg file */
+struct TPMPPIConfig {
+    u32 tpmppi_address;
+    u8 tpm_version;
+    u8 tpmppi_version;
+#define TPM_PPI_VERSION_1_30  1
+} PACKED;
+
+static struct tpm_ppi *tp;
+
+#define TPM_PPI_FLAGS (TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ)
+
+static const u8 tpm12_ppi_funcs[] = {
+    [TPM_PPI_OP_NOOP] = TPM_PPI_FLAGS,
+    [TPM_PPI_OP_ENABLE]  = TPM_PPI_FLAGS,
+    [TPM_PPI_OP_DISABLE] = TPM_PPI_FLAGS,
+    [TPM_PPI_OP_ACTIVATE] = TPM_PPI_FLAGS,
+    [TPM_PPI_OP_DEACTIVATE] = TPM_PPI_FLAGS,
+    [TPM_PPI_OP_CLEAR] = TPM_PPI_FLAGS,
+    [TPM_PPI_OP_SET_OWNERINSTALL_TRUE] = TPM_PPI_FLAGS,
+    [TPM_PPI_OP_SET_OWNERINSTALL_FALSE] = TPM_PPI_FLAGS,
+};
+
+static const u8 tpm2_ppi_funcs[] = {
+    [TPM_PPI_OP_NOOP] = TPM_PPI_FLAGS,
+    [TPM_PPI_OP_CLEAR] = TPM_PPI_FLAGS,
+};
+
+void
+tpm_ppi_init(void)
+{
+    int size;
+    struct TPMPPIConfig *tpm_ppi_config_p;
+
+    tpm_ppi_config_p = romfile_loadfile("etc/tpm/config", &size);
+    if (!tpm_ppi_config_p || size != sizeof(*tpm_ppi_config_p))
+        return;
+
+    tp = (struct tpm_ppi *)tpm_ppi_config_p->tpmppi_address;
+    if (!tp)
+        return;
+
+    memset(&tp->func, 0, sizeof(tp->func));
+    switch (tpm_ppi_config_p->tpmppi_version) {
+    case TPM_PPI_VERSION_1_30:
+        switch (tpm_ppi_config_p->tpm_version) {
+        case TPM_VERSION_1_2:
+            memcpy(&tp->func, tpm12_ppi_funcs, sizeof(tpm12_ppi_funcs));
+            break;
+        case TPM_VERSION_2:
+            memcpy(&tp->func, tpm2_ppi_funcs, sizeof(tpm2_ppi_funcs));
+            break;
+        }
+        break;
+    }
+
+    if (!tp->ppin) {
+        tp->ppin = 1;
+        tp->pprq = TPM_PPI_OP_NOOP;
+        tp->lppr = TPM_PPI_OP_NOOP;
+        tp->nextStep = TPM_PPI_OP_NOOP;
+    }
+}
+
+void
+tpm_ppi_process(void)
+{
+    tpm_ppi_code op;
+
+    if (tp) {
+        op = tp->pprq;
+        if (!op) {
+            /* intermediate step after a reboot? */
+            op = tp->nextStep;
+        } else {
+            /* last full opcode */
+            tp->lppr = op;
+        }
+        if (op) {
+            /*
+             * Reset the opcode so we don't permanently reboot upon
+             * code 3 (Activate).
+             */
+            tp->pprq = TPM_PPI_OP_NOOP;
+
+            printf("Processing TPM PPI opcode %d\n", op);
+            tp->pprp = tpm_process_cfg(op, 0);
+            if (tp->pprp == -1)
+                tp->pprp = TPM_PPI_FIRMWARE_FAILURE;
+        }
+    }
 }
 
 static int
@@ -1166,6 +1288,10 @@ tpm_setup(void)
 
     tpm_smbios_measure();
     tpm_add_action(2, "Start Option ROM Scan");
+
+    tpm_ppi_init();
+    // Process user-requested TPM state change
+    tpm_ppi_process();
 }
 
 static void
@@ -1664,8 +1790,6 @@ tpm_interrupt_handler32(struct bregs *regs)
  * TPM Configuration Menu
  ****************************************************************/
 
-typedef u8 tpm_ppi_code;
-
 static int
 tpm12_read_has_owner(int *has_owner)
 {
@@ -1855,6 +1979,7 @@ tpm12_process_cfg(tpm_ppi_code msgCode, int verbose)
             break;
 
         default:
+            ret = -1;
             break;
     }
 
@@ -1935,12 +2060,28 @@ tpm20_process_cfg(tpm_ppi_code msgCode, int verbose)
             if (!ret)
                  ret = tpm20_clear();
             break;
+
+        default:
+            ret = -1;
+            break;
     }
 
     if (ret)
         printf("Op %d: An error occurred: 0x%x\n", msgCode, ret);
 
     return ret;
+}
+
+static int
+tpm_process_cfg(tpm_ppi_code msgCode, int verbose)
+{
+    switch (TPM_version) {
+    case TPM_VERSION_1_2:
+        return tpm12_process_cfg(msgCode, verbose);
+    case TPM_VERSION_2:
+        return tpm20_process_cfg(msgCode, verbose);
+    }
+    return -1;
 }
 
 static int

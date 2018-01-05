@@ -568,4 +568,7 @@ struct pcctes_romex
 #define TPM_PPI_OP_SET_OWNERINSTALL_TRUE 8
 #define TPM_PPI_OP_SET_OWNERINSTALL_FALSE 9
 
+/* PPI result error code */
+#define TPM_PPI_FIRMWARE_FAILURE     0xFFFFFFF1
+
 #endif // tcg.h
