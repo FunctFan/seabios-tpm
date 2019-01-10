@@ -117,33 +117,84 @@ struct TPMPPIConfig {
 
 static struct tpm_ppi *tp;
 
-#define TPM_PPI_FLAGS (TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ)
-
-static const u8 tpm12_ppi_funcs[] = {
-    [TPM_PPI_OP_NOOP] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_ENABLE]  = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_DISABLE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_ACTIVATE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_DEACTIVATE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_CLEAR] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_ENABLE_ACTIVATE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_DEACTIVATE_DISABLE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_SET_OWNERINSTALL_TRUE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_SET_OWNERINSTALL_FALSE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_ENABLE_ACTIVATE_SET_OWNERINSTALL_TRUE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_SET_OWNERINSTALL_FALSE_DEACTIVATE_DISABLE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_CLEAR_ENABLE_ACTIVATE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR_ENABLE_ACTIVATE] = TPM_PPI_FLAGS,
+struct tpm_ppi_op {
+    u8 flags;
 };
 
-static const u8 tpm2_ppi_funcs[] = {
-    [TPM_PPI_OP_NOOP] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_CLEAR] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_CLEAR_ENABLE_ACTIVATE] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR] = TPM_PPI_FLAGS,
-    [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR_ENABLE_ACTIVATE] = TPM_PPI_FLAGS,
+static const struct tpm_ppi_op tpm12_ppi_funcs[] = {
+    [TPM_PPI_OP_NOOP] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_ENABLE]  = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_DISABLE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_ACTIVATE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_DEACTIVATE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_CLEAR] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_ENABLE_ACTIVATE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_DEACTIVATE_DISABLE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_SET_OWNERINSTALL_TRUE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_SET_OWNERINSTALL_FALSE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_ENABLE_ACTIVATE_SET_OWNERINSTALL_TRUE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_SET_OWNERINSTALL_FALSE_DEACTIVATE_DISABLE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_CLEAR_ENABLE_ACTIVATE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR_ENABLE_ACTIVATE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
 };
+
+static const struct tpm_ppi_op tpm2_ppi_funcs[] = {
+    [TPM_PPI_OP_NOOP] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_CLEAR] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_CLEAR_ENABLE_ACTIVATE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+    [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR_ENABLE_ACTIVATE] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+    },
+};
+
+static void
+tpm_ppi_cpy_flags(u8 *dest, const struct tpm_ppi_op *tpo, size_t tpo_len)
+{
+    size_t i;
+
+    for (i = 0; i < tpo_len; i++)
+        dest[i] = tpo[i].flags;
+}
 
 void
 tpm_ppi_init(void)
@@ -164,10 +215,12 @@ tpm_ppi_init(void)
     case TPM_PPI_VERSION_1_30:
         switch (tpm_ppi_config_p->tpm_version) {
         case TPM_VERSION_1_2:
-            memcpy(&tp->func, tpm12_ppi_funcs, sizeof(tpm12_ppi_funcs));
+            tpm_ppi_cpy_flags(&tp->func[0],
+                              tpm12_ppi_funcs, ARRAY_SIZE(tpm12_ppi_funcs));
             break;
         case TPM_VERSION_2:
-            memcpy(&tp->func, tpm2_ppi_funcs, sizeof(tpm2_ppi_funcs));
+            tpm_ppi_cpy_flags(&tp->func[0],
+                              tpm2_ppi_funcs, ARRAY_SIZE(tpm2_ppi_funcs));
             break;
         }
         break;
