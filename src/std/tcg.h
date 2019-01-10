@@ -577,5 +577,6 @@ struct pcctes_romex
 
 /* PPI result error code */
 #define TPM_PPI_FIRMWARE_FAILURE     0xFFFFFFF1
+#define TPM_PPI_FIRMWARE_USER_REJECT 0xFFFFFFF0
 
 #endif // tcg.h

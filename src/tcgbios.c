@@ -115,57 +115,128 @@ struct TPMPPIConfig {
 #define TPM_PPI_VERSION_1_30  1
 } PACKED;
 
+static struct TPMPPIConfig tpm_ppi_config;
+
 static struct tpm_ppi *tp;
 
 struct tpm_ppi_op {
     u8 flags;
+    const char *tpmop;
+    const char *note;
+    const char *warn;
+    int ak_scancode;     /* acceptance key scan code */
 };
+#define TPM_PPI_SCANCODE_AK   0x1e /* A */
+#define TPM_PPI_SCANCODE_CAK  0x2e /* C */
+#define TPM_PPI_KEY_AK    "A"
+#define TPM_PPI_KEY_CAK   "C"
+
+#define WARN_SECURITY_APPS \
+"Doing so might prevent security applications that rely on the TPM\n" \
+"from functioning as expected"
+#define WARN_CLEARING \
+"Clearing erases information stored on the TPM. You will loose all\n" \
+"created keys and access to data encrypted by these keys."
+#define WARN_CHANGES  \
+"Allowing changes to the TPM's firmware may affect the operation of\n" \
+"the TPM and may erase information stored on the TPM."
+#define WARN_CLEARING2 \
+"Clearing erases information stored on the TPM.\n" \
+"You will lose all created keys and access to data encrypted by these keys.\n" \
+"Take ownership as soon as possible after this step."
+
+#define NOTE_TURN_ON       "This action will turn on the TPM"
+#define NOTE_TURN_OFF      "This action will turn off the TPM"
+#define NOTE_CLEAR_ON      "This action will clear and turn on the TPM"
+
 
 static const struct tpm_ppi_op tpm12_ppi_funcs[] = {
     [TPM_PPI_OP_NOOP] = {
         .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
     },
     [TPM_PPI_OP_ENABLE]  = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "enable",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
     },
     [TPM_PPI_OP_DISABLE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "disable",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
+        .warn = WARN_SECURITY_APPS,
     },
     [TPM_PPI_OP_ACTIVATE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "activate",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
     },
     [TPM_PPI_OP_DEACTIVATE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "deactivate",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
+        .warn = WARN_SECURITY_APPS,
     },
     [TPM_PPI_OP_CLEAR] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "clear",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .warn = WARN_CLEARING,
     },
     [TPM_PPI_OP_ENABLE_ACTIVATE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "enable and activate",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
+        .note = NOTE_TURN_ON,
     },
     [TPM_PPI_OP_DEACTIVATE_DISABLE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "deactivate and disable",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
+        .note = NOTE_TURN_OFF,
+        .warn = WARN_SECURITY_APPS,
     },
     [TPM_PPI_OP_SET_OWNERINSTALL_TRUE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "allow a user to take ownership",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
     },
     [TPM_PPI_OP_SET_OWNERINSTALL_FALSE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "disallow a user to take ownership",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
     },
     [TPM_PPI_OP_ENABLE_ACTIVATE_SET_OWNERINSTALL_TRUE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "enable, activate, and allow a user to take ownership",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
+        .note = NOTE_TURN_ON,
     },
     [TPM_PPI_OP_SET_OWNERINSTALL_FALSE_DEACTIVATE_DISABLE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "deactivate, disable, and disallow a user to take ownership",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
+        .note = NOTE_TURN_OFF,
+        .warn = WARN_SECURITY_APPS,
     },
     [TPM_PPI_OP_CLEAR_ENABLE_ACTIVATE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "clear, enable, and activate",
+        .ak_scancode = TPM_PPI_SCANCODE_AK,
+        .note = NOTE_CLEAR_ON,
+        .warn = WARN_CLEARING2,
     },
     [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "enable, activate, and clear",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .warn = WARN_CLEARING,
     },
     [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR_ENABLE_ACTIVATE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "enable, activate, clear, enable, and activate",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .note = NOTE_CLEAR_ON,
+        .warn = WARN_CLEARING2,
     },
 };
 
@@ -174,16 +245,28 @@ static const struct tpm_ppi_op tpm2_ppi_funcs[] = {
         .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
     },
     [TPM_PPI_OP_CLEAR] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "clear",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .warn = WARN_CLEARING,
     },
     [TPM_PPI_OP_CLEAR_ENABLE_ACTIVATE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "clear",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .warn = WARN_CLEARING,
     },
     [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "clear",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .warn = WARN_CLEARING,
     },
     [TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR_ENABLE_ACTIVATE] = {
-        .flags = TPM_PPI_FUNC_ALLOWED_USR_NOT_REQ,
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "clear",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .warn = WARN_CLEARING,
     },
 };
 
@@ -194,6 +277,58 @@ tpm_ppi_cpy_flags(u8 *dest, const struct tpm_ppi_op *tpo, size_t tpo_len)
 
     for (i = 0; i < tpo_len; i++)
         dest[i] = tpo[i].flags;
+}
+
+static int
+tpm_ppi_check_pp(tpm_ppi_code op, u8 tpm_version)
+{
+    const struct tpm_ppi_op *tpo;
+
+    switch (tpm_version) {
+    case TPM_VERSION_1_2:
+        if (op > ARRAY_SIZE(tpm12_ppi_funcs))
+            return -1;
+        tpo = &tpm12_ppi_funcs[op];
+        break;
+    case TPM_VERSION_2:
+        if (op > ARRAY_SIZE(tpm2_ppi_funcs))
+            return -1;
+        tpo = &tpm2_ppi_funcs[op];
+        break;
+    default:
+        return -1;
+    }
+
+    if (! (tpo->flags & TPM_PPI_FUNC_ALLOWED_USR_REQ))
+        return 0;
+
+    const char *note = tpo->note;
+    const char *warn = tpo->warn;
+
+    /* TPM_PPI_FUNC_ALLOWED_USR_REQ flag is set -- need user confirmation */
+    printf("\nA configuration change was request to %s this computer's TPM.\n"
+           "%s%s%s"
+           "%s%s%s"
+           "\nPress %s to %s the TPM\n"
+           "Press ESC to reject this change request and continue\n\n",
+           tpo->tpmop,
+           note ? "NOTE: "    : "", note ? note : "", note ? "\n" : "",
+           warn ? "WARNING: " : "", warn ? warn : "", warn ? "\n" : "",
+           tpo->ak_scancode == TPM_PPI_SCANCODE_AK ? TPM_PPI_KEY_AK
+                                                   : TPM_PPI_KEY_CAK,
+           tpo->tpmop);
+    while (1) {
+        int scancode = get_keystroke(1000);
+        switch (scancode) {
+        case ~0:
+            continue;
+        case 1: /* ESC */
+            printf("TPM operation rejected by user.\n");
+            return TPM_PPI_FIRMWARE_USER_REJECT;
+        }
+        if (scancode == tpo->ak_scancode)
+            return 0;
+    }
 }
 
 void
@@ -209,6 +344,8 @@ tpm_ppi_init(void)
     tp = (struct tpm_ppi *)tpm_ppi_config_p->tpmppi_address;
     if (!tp)
         return;
+
+    memcpy(&tpm_ppi_config, tpm_ppi_config_p, size);
 
     memset(&tp->func, 0, sizeof(tp->func));
     switch (tpm_ppi_config_p->tpmppi_version) {
@@ -245,8 +382,17 @@ tpm_ppi_process(void)
             /* intermediate step after a reboot? */
             op = tp->nextStep;
         } else {
+            tp->pprp = tpm_ppi_check_pp(op, tpm_ppi_config.tpm_version);
+            if (tp->pprp == -1)
+                tp->pprp = TPM_PPI_FIRMWARE_FAILURE;
+
             /* last full opcode */
             tp->lppr = op;
+            if ((int)tp->pprp < 0) {
+                /* user rejected operation or other error */
+                tp->pprq = TPM_PPI_OP_NOOP;
+                return;
+            }
         }
         if (op) {
             /*
@@ -1354,8 +1500,6 @@ tpm_setup(void)
     tpm_add_action(2, "Start Option ROM Scan");
 
     tpm_ppi_init();
-    // Process user-requested TPM state change
-    tpm_ppi_process();
 }
 
 static void

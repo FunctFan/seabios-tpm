@@ -217,6 +217,9 @@ maininit(void)
         wait_threads();
     }
 
+    // Process TPM PPI operation -- may need user interaction
+    tpm_ppi_process();
+
     // Run option roms
     optionrom_setup();
 
