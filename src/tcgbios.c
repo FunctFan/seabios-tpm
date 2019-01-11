@@ -29,7 +29,11 @@
 
 typedef u8 tpm_ppi_code;
 
-static int tpm_process_cfg(tpm_ppi_code msgCode, int verbose, u8 *nextStep);
+static int tpm_process_cfg(tpm_ppi_code msgCode, int verbose, u8 *nextStep,
+                           u32 pprm, int *do_reset);
+static int tpm20_check_pcrbanks(u32 activate_banks);
+static void tpm20_display_pcrbanks(u32 activate_banks, const char *pre,
+                                   const char *suf);
 
 /****************************************************************
  * ACPI TCPA table interface
@@ -125,6 +129,9 @@ struct tpm_ppi_op {
     const char *note;
     const char *warn;
     int ak_scancode;     /* acceptance key scan code */
+    int (*check_pprm) (u32 pprm);
+    void (*display_pprm) (u32 pprm, const char *pre, const char *suf);
+    const char *display_text;
 };
 #define TPM_PPI_SCANCODE_AK   0x1e /* A */
 #define TPM_PPI_SCANCODE_CAK  0x2e /* C */
@@ -144,6 +151,12 @@ struct tpm_ppi_op {
 "Clearing erases information stored on the TPM.\n" \
 "You will lose all created keys and access to data encrypted by these keys.\n" \
 "Take ownership as soon as possible after this step."
+#define WARN_PCRBANKS \
+"Changing the PCR bank(s) of the boot measurements may prevent the \n" \
+"Operating System from properly processing the measurements. Please check if\n" \
+"your Operating System supports the new PCR bank(s).\n" \
+"WARNING: Secrets in the TPM that are bound to the boot state of your\n" \
+"machine may become unusable."
 
 #define NOTE_TURN_ON       "This action will turn on the TPM"
 #define NOTE_TURN_OFF      "This action will turn off the TPM"
@@ -268,6 +281,15 @@ static const struct tpm_ppi_op tpm2_ppi_funcs[] = {
         .ak_scancode = TPM_PPI_SCANCODE_CAK,
         .warn = WARN_CLEARING,
     },
+    [TPM_PPI_OP_SET_PCR_BANKS] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "change the boot measurements to use different PCR banks of",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .warn = WARN_PCRBANKS,
+        .check_pprm = tpm20_check_pcrbanks,
+        .display_pprm = tpm20_display_pcrbanks,
+        .display_text = "\nThis change will activate PCR banks: ",
+    },
 };
 
 static void
@@ -280,7 +302,7 @@ tpm_ppi_cpy_flags(u8 *dest, const struct tpm_ppi_op *tpo, size_t tpo_len)
 }
 
 static int
-tpm_ppi_check_pp(tpm_ppi_code op, u8 tpm_version)
+tpm_ppi_check_pp(tpm_ppi_code op, u32 pprm, u8 tpm_version)
 {
     const struct tpm_ppi_op *tpo;
 
@@ -306,17 +328,23 @@ tpm_ppi_check_pp(tpm_ppi_code op, u8 tpm_version)
     const char *warn = tpo->warn;
 
     /* TPM_PPI_FUNC_ALLOWED_USR_REQ flag is set -- need user confirmation */
-    printf("\nA configuration change was request to %s this computer's TPM.\n"
-           "%s%s%s"
+    printf("\nA configuration change was request to %s this computer's TPM.\n",
+           tpo->tpmop);
+
+    if (tpo->display_pprm) {
+        tpo->display_pprm(pprm, tpo->display_text, "\n\n");
+    }
+
+    printf("%s%s%s"
            "%s%s%s"
            "\nPress %s to %s the TPM\n"
            "Press ESC to reject this change request and continue\n\n",
-           tpo->tpmop,
            note ? "NOTE: "    : "", note ? note : "", note ? "\n" : "",
            warn ? "WARNING: " : "", warn ? warn : "", warn ? "\n" : "",
            tpo->ak_scancode == TPM_PPI_SCANCODE_AK ? TPM_PPI_KEY_AK
                                                    : TPM_PPI_KEY_CAK,
            tpo->tpmop);
+
     while (1) {
         int scancode = get_keystroke(1000);
         switch (scancode) {
@@ -326,8 +354,11 @@ tpm_ppi_check_pp(tpm_ppi_code op, u8 tpm_version)
             printf("TPM operation rejected by user.\n");
             return TPM_PPI_FIRMWARE_USER_REJECT;
         }
-        if (scancode == tpo->ak_scancode)
+        if (scancode == tpo->ak_scancode) {
+            if (tpo->check_pprm && tpo->check_pprm(pprm) < 0)
+                return -1;
             return 0;
+        }
     }
 }
 
@@ -382,7 +413,8 @@ tpm_ppi_process(void)
             /* intermediate step after a reboot? */
             op = tp->nextStep;
         } else {
-            tp->pprp = tpm_ppi_check_pp(op, tpm_ppi_config.tpm_version);
+            tp->pprp = tpm_ppi_check_pp(op, tp->pprm,
+                                        tpm_ppi_config.tpm_version);
             if (tp->pprp == -1)
                 tp->pprp = TPM_PPI_FIRMWARE_FAILURE;
 
@@ -403,9 +435,13 @@ tpm_ppi_process(void)
 
             dprintf(DEBUG_tcg, "TCGBIOS: Processing TPM PPI opcode %d\n", op);
             printf("Processing TPM PPI opcode %d\n", op);
-            tp->pprp = tpm_process_cfg(op, 0, &tp->nextStep);
+            int do_reset;
+            tp->pprp = tpm_process_cfg(op, 0, &tp->nextStep, tp->pprm,
+                                       &do_reset);
             if (tp->pprp == -1)
                 tp->pprp = TPM_PPI_FIRMWARE_FAILURE;
+            if (do_reset)
+                reset();
         }
     }
 }
@@ -828,6 +864,28 @@ tpm20_get_pcrbanks(void)
 }
 
 static int
+tpm20_supports_pcrbank(u16 hashAlg)
+{
+    if (!tpm20_pcr_selection)
+        return 0;
+
+    struct tpms_pcr_selection *sel = tpm20_pcr_selection->selections;
+    void *end = (void*)tpm20_pcr_selection + tpm20_pcr_selection_size;
+
+    while (1) {
+        u8 sizeOfSelect = sel->sizeOfSelect;
+        void *nsel = (void*)sel + sizeof(*sel) + sizeOfSelect;
+        if (nsel > end)
+            return 0;
+
+        if (be16_to_cpu(sel->hashAlg) == hashAlg)
+            return 1;
+
+        sel = nsel;
+    }
+}
+
+static int
 tpm20_get_suppt_pcrbanks(u8 *suppt_pcrbanks, u8 *active_pcrbanks)
 {
     *suppt_pcrbanks = 0;
@@ -931,9 +989,51 @@ static int tpm20_activate_pcrbanks(u32 active_banks)
     if (!ret)
         ret = tpm_simple_cmd(0, TPM2_CC_Shutdown,
                              2, TPM2_SU_CLEAR, TPM_DURATION_TYPE_SHORT);
-    if (!ret)
-        reset();
     return ret;
+}
+
+static int tpm20_check_pcrbanks(u32 pcrbanks)
+{
+    u8 hashalg_flag = TPM2_ALG_SHA1_FLAG;
+    int rc = -1;
+
+    while (hashalg_flag) {
+        if (pcrbanks & hashalg_flag) {
+            rc = 0;
+            u16 hashalg = tpm20_hashalg_flag_to_hashalg(hashalg_flag);
+            if (!tpm20_supports_pcrbank(hashalg)) {
+                const char *name = tpm20_hashalg_flag_to_name(hashalg_flag);
+                printf("\nTPM does not support %s (0x%x) PCR bank.\n",
+                       name ? name : "unknown",
+                       hashalg_flag);
+                return -1;
+            }
+            pcrbanks ^= hashalg_flag;
+        }
+        hashalg_flag <<= 1;
+    }
+    return rc;
+}
+
+static void tpm20_display_pcrbanks(u32 pcrbanks, const char *pre,
+                                   const char *suf)
+{
+    u8 hashalg_flag = TPM2_ALG_SHA1_FLAG;
+    int c = 0;
+
+    printf(pre);
+
+    while (hashalg_flag) {
+        if (pcrbanks & hashalg_flag) {
+            const char *name = tpm20_hashalg_flag_to_name(hashalg_flag);
+            printf("%s%s",
+                   c++ == 0 ? "": ", ",
+                   name ? name : "unknown");
+        }
+        hashalg_flag <<= 1;
+    }
+
+    printf(suf);
 }
 
 static int
@@ -2305,9 +2405,11 @@ tpm20_clear(void)
 }
 
 static int
-tpm20_process_cfg(tpm_ppi_code msgCode, int verbose)
+tpm20_process_cfg(tpm_ppi_code msgCode, u32 pprm, int *do_reset, int verbose)
 {
     int ret = 0;
+
+    *do_reset = 0;
 
     switch (msgCode) {
         case TPM_PPI_OP_NOOP: /* no-op */
@@ -2322,6 +2424,12 @@ tpm20_process_cfg(tpm_ppi_code msgCode, int verbose)
                  ret = tpm20_clear();
             break;
 
+        case TPM_PPI_OP_SET_PCR_BANKS:
+            ret = tpm20_activate_pcrbanks(pprm);
+            if (!ret)
+                *do_reset = 1;
+            break;
+
         default:
             ret = -1;
             break;
@@ -2334,13 +2442,14 @@ tpm20_process_cfg(tpm_ppi_code msgCode, int verbose)
 }
 
 static int
-tpm_process_cfg(tpm_ppi_code msgCode, int verbose, u8 *nextStep)
+tpm_process_cfg(tpm_ppi_code msgCode, int verbose, u8 *nextStep, u32 pprm,
+                int *do_reset)
 {
     switch (TPM_version) {
     case TPM_VERSION_1_2:
         return tpm12_process_cfg(msgCode, verbose, nextStep);
     case TPM_VERSION_2:
-        return tpm20_process_cfg(msgCode, verbose);
+        return tpm20_process_cfg(msgCode, pprm, do_reset, verbose);
     }
     return -1;
 }
@@ -2575,8 +2684,10 @@ tpm20_menu_change_active_pcrbanks(void)
                 }
                 break;
             case 30: /* a */
-                if (activate_banks)
-                    tpm20_activate_pcrbanks(activate_banks);
+                if (activate_banks) {
+                    if (!tpm20_activate_pcrbanks(activate_banks))
+                        reset();
+                }
             }
         }
     }
@@ -2616,7 +2727,10 @@ tpm20_menu(void)
             continue;
         }
 
-        tpm20_process_cfg(msgCode, 0);
+        int do_reset;
+        tpm20_process_cfg(msgCode, 0, &do_reset, 0);
+        if (do_reset)
+            reset();
     }
 }
 
