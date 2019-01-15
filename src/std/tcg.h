@@ -348,6 +348,7 @@ struct tpm_res_sha1complete {
 
 /* TPM 2 commands */
 #define TPM2_CC_HierarchyControl    0x121
+#define TPM2_CC_ChangeEPS           0x124
 #define TPM2_CC_Clear               0x126
 #define TPM2_CC_ClearControl        0x127
 #define TPM2_CC_HierarchyChangeAuth 0x129
@@ -421,6 +422,13 @@ struct tpm2_req_clearcontrol {
 } PACKED;
 
 struct tpm2_req_clear {
+    struct tpm_req_header hdr;
+    u32 authhandle;
+    u32 authblocksize;
+    struct tpm2_authblock authblock;
+} PACKED;
+
+struct tpm2_req_change_eps {
     struct tpm_req_header hdr;
     u32 authhandle;
     u32 authblocksize;
@@ -575,6 +583,7 @@ struct pcctes_romex
 #define TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR 21
 #define TPM_PPI_OP_ENABLE_ACTIVATE_CLEAR_ENABLE_ACTIVATE 22
 #define TPM_PPI_OP_SET_PCR_BANKS 23
+#define TPM_PPI_OP_CHANGE_EPS 24
 
 #define TPM2_HASH_ALG_BIT_SHA1    (1 << 0)
 #define TPM2_HASH_ALG_BIT_SHA256  (1 << 1)

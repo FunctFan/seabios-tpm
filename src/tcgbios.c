@@ -151,6 +151,11 @@ struct tpm_ppi_op {
 "Clearing erases information stored on the TPM.\n" \
 "You will lose all created keys and access to data encrypted by these keys.\n" \
 "Take ownership as soon as possible after this step."
+#define WARN_CLEARING3 \
+"Clearing erases information stored on the TPM.\n" \
+"You will lose all created keys and access to data encrypted by these keys.\n" \
+"WARNING: Changing the identity of the TPM may require additional steps to\n" \
+"establish trust into the new identity."
 #define WARN_PCRBANKS \
 "Changing the PCR bank(s) of the boot measurements may prevent the \n" \
 "Operating System from properly processing the measurements. Please check if\n" \
@@ -289,6 +294,12 @@ static const struct tpm_ppi_op tpm2_ppi_funcs[] = {
         .check_pprm = tpm20_check_pcrbanks,
         .display_pprm = tpm20_display_pcrbanks,
         .display_text = "\nThis change will activate PCR banks: ",
+    },
+    [TPM_PPI_OP_CHANGE_EPS] = {
+        .flags = TPM_PPI_FUNC_ALLOWED_USR_REQ,
+        .tpmop = "clear and change the identity of",
+        .ak_scancode = TPM_PPI_SCANCODE_CAK,
+        .warn = WARN_CLEARING3,
     },
 };
 
@@ -2398,6 +2409,34 @@ tpm20_clear(void)
                              TPM_DURATION_TYPE_MEDIUM);
     ret = (ret || resp_length < sizeof(rsp)) ? -1 : be32_to_cpu(rsp.errcode);
 
+    dprintf(DEBUG_tcg, "TCGBIOS: Return value from sending TPM2_CC_ChangeEPS = 0x%08x\n",
+            ret);
+
+    return ret;
+}
+
+static int
+tpm20_change_eps(void)
+{
+    struct tpm2_req_change_eps trce = {
+        .hdr.tag     = cpu_to_be16(TPM2_ST_SESSIONS),
+        .hdr.totlen  = cpu_to_be32(sizeof(trce)),
+        .hdr.ordinal = cpu_to_be32(TPM2_CC_ChangeEPS),
+        .authhandle = cpu_to_be32(TPM2_RH_PLATFORM),
+        .authblocksize = cpu_to_be32(sizeof(trce.authblock)),
+        .authblock = {
+            .handle = cpu_to_be32(TPM2_RS_PW),
+            .noncesize = cpu_to_be16(0),
+            .contsession = TPM2_YES,
+            .pwdsize = cpu_to_be16(0),
+        },
+    };
+    struct tpm_rsp_header rsp;
+    u32 resp_length = sizeof(rsp);
+    int ret = tpmhw_transmit(0, &trce.hdr, &rsp, &resp_length,
+                             TPM_DURATION_TYPE_MEDIUM);
+    ret = (ret || resp_length < sizeof(rsp)) ? -1 : be32_to_cpu(rsp.errcode);
+
     dprintf(DEBUG_tcg, "TCGBIOS: Return value from sending TPM2_CC_Clear = 0x%08x\n",
             ret);
 
@@ -2426,6 +2465,12 @@ tpm20_process_cfg(tpm_ppi_code msgCode, u32 pprm, int *do_reset, int verbose)
 
         case TPM_PPI_OP_SET_PCR_BANKS:
             ret = tpm20_activate_pcrbanks(pprm);
+            if (!ret)
+                *do_reset = 1;
+            break;
+
+        case TPM_PPI_OP_CHANGE_EPS:
+            ret = tpm20_change_eps();
             if (!ret)
                 *do_reset = 1;
             break;
@@ -2702,6 +2747,7 @@ tpm20_menu(void)
     for (;;) {
         printf("1. Clear TPM\n");
         printf("2. Change active PCR banks\n");
+        printf("3. Change identity (Endorsement Primary Seed) of the TPM\n");
 
         printf("\nIf no change is desired or if this menu was reached by "
                "mistake, press ESC to\n"
@@ -2723,6 +2769,9 @@ tpm20_menu(void)
         case 3:
             tpm20_menu_change_active_pcrbanks();
             continue;
+        case 4:
+            msgCode = TPM_PPI_OP_CHANGE_EPS;
+            break;
         default:
             continue;
         }
